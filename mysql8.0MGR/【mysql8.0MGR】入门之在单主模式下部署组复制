@@ -1,0 +1,307 @@
+快速入门
+ 
+MySQL组复制作为MySQL服务器的插件提供，组中的每个服务器都需要配置和安装插件。本节提供了详细的教程，其中包括创建至少具有三个成员的复制组所需的步骤。
+
+2	Deploying Group Replication in Single-Primary Mode
+组中的每个MySQL服务器实例都可以在独立的物理宿主机上运行，这是部署组复制的推荐方式。本节介绍如何创建具有三个MySQL Server实例的复制组，每个实例都运行在不同的宿主机上。有关在同一台宿主机上部署运行组复制的多个MySQL服务器实例的信息，例如出于测试目的，请参见第18.2.2节“在本地部署组复制”。
+
+ 
+
+本教程解释了如何使用组复制插件获取和部署MySQL Server，如何在创建组之前配置每个服务器实例，以及如何使用性能架构监控来验证一切是否正常工作。
+
+2.1	Deploying Instances for Group Replication
+
+第一步是部署至少三个MySQL Server实例，此过程演示为名为s1、s2和s3的实例使用多个主机。假设MySQL Server已安装在每台主机上，安装和升级MySQL。组复制是MySQL Server 8.0提供的内置MySQL插件，因此不需要额外安装。有关MySQL插件的更多背景信息，请参见第5.6节“MySQL Server插件”。
+
+在本示例中，组使用了三个实例，这是创建组的最小实例数。添加更多实例可以提高组的容错性。例如，如果组由三个成员组成，则在一个实例失败的情况下，组可以继续。但是，如果发生另一个故障，该组将无法再继续处理写事务。通过添加更多实例，在组继续处理事务时可能发生故障的服务器数量也会增加。
+
+Configuring an Instance for Group Replication
+本节解释要用于组复制的MySQL Server实例所需的配置设置。
+• Storage Engines
+• Replication Framework
+• Group Replication Settings
+
+Storage Engines
+对于组复制，数据必须存储在InnoDB事务存储引擎中（有关原因的详细信息，请参见第18.3.1节“组复制要求”）。使用其他存储引擎，包括临时内存存储引擎，可能会导致组复制中的错误。按以下方式设置disabled_storage_engines系统变量以防止使用它们：
+disabled_storage_engines="MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY"
+
+请注意，在禁用MyISAM存储引擎的情况下，当您将MySQL实例升级到仍使用mysql_upgrade的版本（在MySQL 8.0.16之前）时，mysql_upgrade可能会失败并出现错误。要处理此问题，您可以在运行mysql_upgrade时重新启用该存储引擎，然后在重新启动服务器时再次禁用它。有关更多信息，请参见第4.4.5节“mysql_upgrade — Check and Upgrade MySQL Tables”。
+
+Replication Framework
+以下设置根据MySQL组复制要求配置复制。
+server_id=1
+gtid_mode=ON
+enforce_gtid_consistency=ON
+这些设置将服务器配置为使用唯一标识符编号1，并允许仅执行可以使用GTID安全记录的语句。
+Up to and including MySQL 8.0.20, the following setting is also required:
+binlog_checksum=NONE
+此设置禁用写入二进制日志的事件的校验和，默认为启用。从MySQL 8.0.21开始，组复制支持二进制日志中存在校验和，并可以使用它们来验证某些通道上事件的完整性，因此您可以使用默认设置。
+
+如果您使用的MySQL版本早于8.0.3，其中复制的默认值已改进，则还需要将这些行添加到成员的选项文件中。如果在更高版本的选项文件中包含这些系统变量中的任何一个，请确保它们的设置如图所示。
+log_bin=binlog
+log_slave_updates=ON
+binlog_format=ROW
+master_info_repository=TABLE
+relay_log_info_repository=TABLE
+transaction_write_set_extraction=XXHASH64
+
+Group Replication Settings
+此时，选项文件可确保服务器已配置，并被指示在给定配置下实例化复制基础架构。以下部分配置服务器的组复制设置。
+plugin_load_add='group_replication.so'
+group_replication_group_name="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+group_replication_start_on_boot=off
+group_replication_local_address= "s1:33061"
+group_replication_group_seeds= "s1:33061,s2:33061,s3:33061"
+group_replication_bootstrap_group=off
+
+plugin-load-add  将组复制插件添加到服务器在启动时加载的插件列表中。在生产部署中，这比手动安装插件更可取。
+Configuring group_replication_group_name tells the plugin that the group that it is joining, or creating, is named "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".
+ group_replication_group_name的值必须是有效的UUID。您可以使用SELECT UUID()生成一个。此UUID构成接收事务时使用的GTID的一部分
+由来自客户端的组成员，并查看组成员内部生成的更改事件，将写入二进制日志。
+
+将group_replication_start_on_boot变量配置为off将指示插件在服务器启动时不会自动启动操作。这在设置组复制时非常重要因为它确保您可以在手动启动插件之前配置服务器。
+
+配置group_replication_local_address设置成员用于与组中其他成员进行内部通信的网络地址和端口。组复制将此地址用于涉及组通信引擎（XCom,Paxos变体）远程实例的内部成员到成员连接。
+
+配置group_replication_group_seeds设置组成员的主机名和端口，新成员用于建立其与组的连接。这些成员称为种子成员。建立连接后，组成员身份信息将列出在性能架构表replication_group_members中。通常
+group_replication_group_seeds列表包含组成员group_replication_local_address的主机名：端口，但这不是强制性的，可以选择组成员的子集作为种子。
+
+配置group_replication_bootstrap_group会指示插件是否引导组。在这种情况下，即使s1是组的第一个成员，我们在选项文件中将此变量设置为off。相反，我们在实例运行时配置group_replication_bootstrap_group，以确保只有一个成员实际引导组。
+
+User Credentials For Distributed Recovery分布式恢复的用户凭据
+组复制使用分布式恢复进程在将组成员加入组时同步他们。分布式恢复涉及使用名为group_replication_recovery的复制通道将事务从提供者的二进制日志传输到加入成员。因此，您必须设置具有正确权限的复制用户，以便组复制可以建立直接成员到成员的复制通道。如果已将组成员设置为支持使用远程克隆作为分布式恢复的一部分，MySQL 8.0.17提供了此操作，此复制用户也用作提供者上的克隆用户，并且还需要此角色的正确权限。
+
+每个组成员上的分布式恢复必须使用相同的复制用户。创建用于分布式恢复的复制用户的过程可以在二进制日志中捕获，然后您可以依靠分布式恢复来复制用于创建用户的语句。或者，您可以在创建复制用户之前禁用二进制日志记录，然后在每个成员上手动创建用户，例如，如果您希望避免将更改传播到其他服务器实例。如果您这样做，请确保在配置用户后重新启用二进制日志记录。
+
+要创建用于分布式恢复的复制用户，请执行以下步骤：
+1.	启动MySQL服务器实例，然后将客户端连接到该实例。
+2.	如果要禁用二进制日志记录以便在每个实例上单独创建复制用户，请通过发出以下语句来执行此操作：
+mysql> SET SQL_LOG_BIN=0;
+3.	创建具有复制SLAVE权限的MySQL用户，以便用于分布式恢复，如果服务器设置为支持克隆，则将具有作为克隆操作中的捐赠者的备份_管理权限。在此示例中，显示了具有密码密码的用户rpl_user。配置服务器时，请使用适当的用户名和密码：
+mysql> CREATE USER rpl_user@'%' IDENTIFIED BY 'password';
+mysql> GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';
+mysql> GRANT BACKUP_ADMIN ON *.* TO rpl_user@'%';
+mysql> FLUSH PRIVILEGES;
+4.	如果禁用了二进制日志记录，请在创建用户后立即通过发出以下语句再次启用它：
+mysql> SET SQL_LOG_BIN=1;
+5.	创建复制用户后，必须向服务器提供用户凭据，以便与分布式恢复一起使用。您可以通过使用更改复制源TO语句（来自MySQL 8.0.23）或更改主TO语句（在MySQL 8.0.23之前）将用户凭据设置为group_replication_recovery通道的凭据来执行此操作。或者，从MySQL 8.0.21中，您可以在START GROUP_REP语句上指定分布式恢复的用户凭据。
+
+使用CHANGE REPLICATION SOURCE TO | CHANGE MASTER TO设置的用户凭据以纯文本存储在服务器上的复制元数据存储库中。每当启动组复制时，它们都会应用，包括在group_replication_start_on_boot系统变量设置为ON时自动启动。
+
+在START GROUP_REPLICATION中指定的用户凭据仅保存在内存中，并通过STOP GROUP_REPLICATION语句或服务器关闭删除。您必须发出START GROUP_REPLICATION 语句才能再次提供凭据，因此无法使用这些凭据自动启动组复制。此指定用户凭据的方法有助于保护组复制服务器免受未经授权的访问。
+
+有关提供用户凭据的每种方法的安全影响的详细信息，请参阅安全地提供复制用户凭据。如果选择使用CHANGE REPLICATION SOURCE TO| CHANGE MASTER TO语句提供用户凭据，请立即在服务器实例上发出以下语句，将rpl_user和password替换为创建用户时使用的值：
+mysql> CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+Or from MySQL 8.0.23:
+mysql> CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+
+Launching Group Replication
+配置并启动服务器s1后，安装组复制插件。如果您在选项文件中使用了plugin_load_add='group_replication.so'，则会安装组复制插件，您可以继续下一步。如果您决定手动安装插件，请连接到服务器并发出以下命令：
+INSTALL PLUGIN group_replication SONAME 'group_replication.so';
+要检查插件是否安装成功，请发出显示插件；并检查输出。它应该显示这样的东西：
+mysql> SHOW PLUGINS;
++----------------------------+----------+--------------------+----------------------+-------------+
+| Name | Status | Type | Library | License |
++----------------------------+----------+--------------------+----------------------+-------------+
+| binlog | ACTIVE | STORAGE ENGINE | NULL | PROPRIETARY |
+(...)
+| group_replication | ACTIVE | GROUP REPLICATION | group_replication.so | PROPRIETARY |
++----------------------------+----------+--------------------+----------------------+-------------+
+
+Bootstrapping the Group引导组
+第一次启动组的过程称为引导。您可以使用group_replication_bootstrap_group系统变量引导组。引导只能由单个服务器完成，即启动组的服务器，并且只能执行一次。这就是为什么group_replication_bootstrap_group选项的值没有存储在实例的选项文件中。如果它保存在选项文件中，则重新启动时，服务器会自动引导具有相同名称的第二个组。这将导致两个具有相同名称的不同组。同样的理由也适用于在此选项设置为ON的情况下停止和重新启动插件。因此，要安全地引导组，请连接到s1并发出以下语句：
+mysql> SET GLOBAL group_replication_bootstrap_group=ON;
+mysql> START GROUP_REPLICATION;
+mysql> SET GLOBAL group_replication_bootstrap_group=OFF;
+或者，如果您要在START GROUP_REPLICATION语句（您可以从MySQL 8.0.21）上提供分布式恢复的用户凭据，请发出以下语句：
+mysql> SET GLOBAL group_replication_bootstrap_group=ON;
+mysql> START GROUP_REPLICATION USER='rpl_user', PASSWORD='password';
+mysql> SET GLOBAL group_replication_bootstrap_group=OFF;
+
+一旦START GROUP_REPLICATION语句返回，该组就已启动。您可以检查组现在是否已创建，并且其中是否有一个成员：
+mysql> SELECT * FROM performance_schema.replication_group_members;
++---------------------------+--------------------------------------+-------------+-------------+---------------+
+| CHANNEL_NAME | MEMBER_ID | MEMBER_HOST | MEMBER_PORT | MEMBER_STATE +---------------------------+--------------------------------------+-------------+-------------+---------------+
+| group_replication_applier | ce9be252-2b71-11e6-b8f4-00212844f856 | s1 | 3306 | ONLINE +---------------------------+--------------------------------------+-------------+-------------+---------------+
+
+此表中的信息确认组中有一个成员，其唯一标识符为ce9be252-2b71-11e6-b8f4-00212844f856，该成员处于在线状态，并在s1侦听端口3306上的客户端连接。
+为了证明服务器确实在一个组中，并且它能够处理负载，请创建一个表并向其中添加一些内容。
+mysql> CREATE DATABASE test;
+mysql> USE test;
+mysql> CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 TEXT NOT NULL);
+mysql> INSERT INTO t1 VALUES (1, 'Luis');
+检查表t1的内容和二进制日志。
+mysql> SELECT * FROM t1;
++----+------+
+| c1 | c2 |
++----+------+
+| 1 | Luis |
+mysql> SHOW BINLOG EVENTS;
+ 
+
+如上所述，创建了数据库和表对象，并将其相应的DDL语句写入二进制日志。此外，数据被插入到表中并写入二进制日志，因此它可以用于通过从捐赠者的二进制日志中的状态传输进行分布式恢复。
+
+Adding Instances to the Group
+此时，组中有一个成员，即服务器s1，其中有一些数据。现在是时候通过添加先前配置的其他两台服务器来扩展组了。
+
+Adding a Second Instance
+为了添加第二个实例，服务器s2，首先为其创建配置文件。该配置与服务器s1使用的配置类似，但server_id等内容除外。这些不同的行在下面的列表中突出显示。
+[mysqld]
+#
+# Disable other storage engines
+#
+disabled_storage_engines="MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY"
+#
+# Replication configuration parameters
+#
+server_id=2
+gtid_mode=ON
+enforce_gtid_consistency=ON
+binlog_checksum=NONE # Not needed from 8.0.21
+#
+# Group Replication configuration
+#
+plugin_load_add='group_replication.so'
+group_replication_group_name="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+group_replication_start_on_boot=off
+group_replication_local_address= "s2:33061"
+group_replication_group_seeds= "s1:33061,s2:33061,s3:33061"
+group_replication_bootstrap_group= off
+
+与服务器s1的过程类似，在选项文件到位的情况下，您可以启动服务器。然后，按以下方式配置分布式恢复凭据。这些命令与设置服务器s1时使用的命令相同，因为用户在组内共享。此成员需要在第18.2.1.3节“分布式恢复的用户凭据”中配置相同的复制用户。如果您依靠分布式恢复在所有成员上配置用户，则当s2连接到种子s1时，复制用户将复制到或克隆到s1。如果在s1上配置用户凭据时未启用二进制日志记录，并且远程克隆操作未用于状态传输，则必须在s2上创建复制用户。在这种情况下，连接到s2并发出：
+SET SQL_LOG_BIN=0;
+CREATE USER rpl_user@'%' IDENTIFIED BY 'password';
+GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';
+GRANT BACKUP_ADMIN ON *.* TO rpl_user@'%';
+FLUSH PRIVILEGES;
+SET SQL_LOG_BIN=1;
+
+如果您使用CHANGE REPLICATION SOURCE TO | CHANGE MASTER TO语句提供用户凭据，请在此后发出以下语句：
+CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+Or from MySQL 8.0.23:
+CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+
+启动组复制，s2启动加入组的过程。
+mysql> START GROUP_REPLICATION;
+
+或者，如果您在START GROUP_REPLICATION语句上提供分布式恢复的用户凭据（您可以从MySQL 8.0.21中提供）：
+mysql> START GROUP_REPLICATION USER='rpl_user', PASSWORD='password';
+
+与之前与s1上执行的步骤相同的步骤不同，这里的区别在于，您不需要引导组，因为组已经存在。换句话说，在s2上group_replication_bootstrap_group设置为OFF，并且在启动组复制之前，不发出SET GLOBAL group_replication_bootstrap_group=ON; 因为服务器s1已经创建并引导了该组。此时，服务器s2只需要添加到现有的组。
+
+再次检查performance_schema.replication_group_members表，显示该组中现在有两个ONLINE服务器。
+mysql> SELECT * FROM performance_schema.replication_group_members;
+ 
+
+当s2尝试加入组时，第18.5.3节“分布式恢复”确保s2应用了与s1应用的相同事务。此过程完成后，s2可以作为成员加入组，此时它将标记为在线。换句话说，它一定已经自动赶上了服务器s1。一旦s2处于联机状态，它就开始处理与组的事务。验证s2是否确实已与服务器s1同步，如下所示。
+
+mysql> SHOW DATABASES LIKE 'test';
++-----------------+
+| Database (test) |
++-----------------+
+| test |
++-----------------+
+
+mysql> SELECT * FROM test.t1;
++----+------+
+| c1 | c2 |
++----+------+
+| 1 | Luis |
++----+------+
+
+ 
+
+如上文所示，第二台服务器已添加到组，并且它已自动从服务器s1复制更改。换句话说，在s1上应用到s2加入组的时间点的事务已复制到s2。
+
+Adding Additional Instances添加其他实例
+向组添加其他实例基本上与添加第二台服务器的步骤顺序相同，只是必须像服务器s2一样更改配置。要总结所需的命令，请执行以下操作：
+1.	Create the configuration file.
+ 
+[mysqld]
+#
+# Disable other storage engines
+#
+disabled_storage_engines="MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY"
+#
+# Replication configuration parameters
+#
+server_id=3
+gtid_mode=ON
+enforce_gtid_consistency=ON
+binlog_checksum=NONE # Not needed from 8.0.21
+#
+# Group Replication configuration
+#
+plugin_load_add='group_replication.so'
+group_replication_group_name="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+group_replication_start_on_boot=off
+group_replication_local_address= "s3:33061"
+group_replication_group_seeds= "s1:33061,s2:33061,s3:33061"
+group_replication_bootstrap_group= off
+2.	启动服务器并连接到服务器。创建分布式恢复的复制用户。
+SET SQL_LOG_BIN=0;
+CREATE USER rpl_user@'%' IDENTIFIED BY 'password';
+GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';
+GRANT BACKUP_ADMIN ON *.* TO rpl_user@'%';
+FLUSH PRIVILEGES;
+SET SQL_LOG_BIN=1;
+
+如果您使用CHANGE REPLICATION SOURCE TO | CHANGE MASTER TO语句提供用户凭据，请在此后发出以下语句：
+CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+Or from MySQL 8.0.23:
+CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='password' \\
+FOR CHANNEL 'group_replication_recovery';
+
+
+3.	如有必要，安装组复制插件。
+INSTALL PLUGIN group_replication SONAME 'group_replication.so';
+4.	启动组复制。
+mysql> START GROUP_REPLICATION;
+或者，如果您在START GROUP_REPLICATION语句上提供分布式恢复的用户凭据（您可以从MySQL 8.0.21中提供）：
+mysql> START GROUP_REPLICATION USER='rpl_user', PASSWORD='password';
+此时，服务器s3已启动并运行，已加入组并赶上组中的其他服务器。再次查阅performance_schema.replication_group_members表，确认情况是这样的。
+
+mysql> SELECT * FROM performance_schema.replication_group_members;
++---------------------------+--------------------------------------+-------------+-------------+---------------+
+| CHANNEL_NAME                    | MEMBER_ID                                       | MEMBER_HOST | MEMBER_PORT | MEMBER_STATE +---------------------------+--------------------------------------+-------------+-------------+---------------+
+| group_replication_applier | 395409e1-6dfa-11e6-970b-00212844f856 | s1              | 3306            | ONLINE 
+| group_replication_applier | 7eb217ff-6df3-11e6-966c-00212844f856 | s3              | 3306            | ONLINE 
+| group_replication_applier | ac39f1e6-6dfa-11e6-a69d-00212844f856 | s2              | 3306            | ONLINE +---------------------------+--------------------------------------+-------------+-------------+---------------+
+在服务器s2或服务器s1上发出相同的查询会产生相同的结果。此外，您还可以验证服务器s3是否已赶上：
+mysql> SHOW DATABASES LIKE 'test';
++-----------------+
+| Database (test) |
++-----------------+
+| test |
++-----------------+
+mysql> SELECT * FROM test.t1;
++----+------+
+| c1 | c2 |
++----+------+
+| 1 | Luis |
++----+------+
+mysql> SHOW BINLOG EVENTS;
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
