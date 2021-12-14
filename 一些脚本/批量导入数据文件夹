@@ -1,0 +1,24 @@
+echo bak_dir=$bak_dir
+echo $@ $#
+if [[ $# == 0 ]];then
+	exit 0
+fi
+
+user=dbAdmin
+passwd=hcm_dbAdmin
+db_ip=hcm-dev-dg02mysql.beta.hic.cloud
+db_n=hcm_userastd_hr
+#db_n=hcm_usera4_hr
+
+for i in $(ls ${bak_dir}/*)
+do
+
+mysql  -h $db_ip -u $user -p${passwd} -D$db_n  -e "source $i" &>> instd.log
+
+if [ $? -eq 0 ];then
+	echo "$(date) $db_n   < $i success" >> instd.log
+else
+	echo "$(date) $db_n   < $i failed!!!" >> instd.log
+fi
+
+done 
