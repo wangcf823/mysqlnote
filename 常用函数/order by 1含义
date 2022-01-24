@@ -1,0 +1,15 @@
+含义：
+
+sql语句中order by 1或者order by 2...order by N
+
+其实1表示第一个栏位,2表示第二栏位; 
+
+依此类推,当表中只有2个栏位时,oder by 3就会出错,这个跟order by 列名没有什么区别,不过在特殊情况下还是很有用的.
+
+注意：
+
+ORDER BY ASC应该没有这样写法,ORDER BY 后面不是字段就是数字;
+
+可以ORDER BY 1 ASC 或者ORDER BY COL1 ASC ;
+
+ASC表示按升序排序,DESC表示按降序排序
