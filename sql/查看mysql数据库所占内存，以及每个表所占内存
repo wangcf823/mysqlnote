@@ -1,0 +1,25 @@
+select concat(truncate (sum(data_length)/1024/1024,2),'MB') AS data_size,
+concat(truncate(sum(max_data_length)/1024/1024,2),'MB') AS max_data_size,
+concat(truncate(sum(data_free)/1024/1024,2),'MB') AS data_free,
+concat(truncate(sum(index_length)/1024/1024,2),'MB') AS index_size
+from information_schema.tables where table_schema='数据库名';
+
+查看mysql库中每个表所占内容
+select table_name,
+concat(truncate(data_length/1024/1024,2),'MB') as data_size,
+concat(truncate(index_length/1024/1024,2),'MB') as index_size
+from information_schema.tables where table_schema='表名'
+group by table_name
+order by data_length desc;
+
+参考：
+
+BYTE(B):字节
+1KB ，2 的 10 次方 ： 1024 BYTE.
+1MB ，2 的 20 次方 ： 1024 KB.
+1GB ，2 的 30 次方 ： 1024 MB.
+1TB ，2 的 40 次方 ： 1024 GB.
+1PB ，2 的 50 次方 ： 1024 TB.
+1EB ，2 的 60 次方 ： 1024 PB.
+1ZB ，2 的 70 次方 ： 1024 EB.
+1YB ，2 的 80 次方 ： 1024 ZB.
