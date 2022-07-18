@@ -1,0 +1,10 @@
+在MySQL高可用架构中，目前使用比较多的是Percona的PXC，Galera以及MySQL 5.7之后的MGR等，其他的还有的MHA，今天介绍另一个比较好用的MySQL高可用复制管理工具：Orchestrator（orch）。
+Orchestrator（orch）：go编写的MySQL高可用性和复制拓扑管理工具，支持复制拓扑结构的调整，自动故障转移和手动主从切换等。后端数据库用MySQL或SQLite存储元数据，并提供Web界面展示MySQL复制的拓扑关系及状态，通过Web可更改MySQL实例的复制关系和部分配置信息，同时也提供命令行和api接口，方便运维管理。相对比MHA来看最重要的是解决了管理节点的单点问题，其通过raft协议保证本身的高可用。GitHub的一部分管理也在用该工具进行管理。关于Orchestrator更详细的介绍可以看Github的介绍，大致的特点有：
+
+① 自动发现MySQL的复制拓扑，并且在web上展示。
+
+② 重构复制关系，可以在web进行拖图来进行复制关系变更。
+
+③ 检测主异常，并可以自动或手动恢复，通过Hooks进行自定义脚本。
+
+④ 支持命令行和web界面管理复制。
