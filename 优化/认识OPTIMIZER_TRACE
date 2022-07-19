@@ -1,0 +1,42 @@
+https://www.cnblogs.com/zhoujinyi/p/13889831.html
+前言
+我们在日常维护数据库的时候，如果遇到慢语句查询的时候，我们一般会怎么做？执行EXPLAIN去查看它的执行计划？
+是的。我们经常会这么做，然后看到执行计划展示给我们的一些信息，告诉我们MySQL是如何执行语句的。
+BUT，执行计划往往只给我们带来了最基础的分析信息，比如是否有使用索引，还有一些其他供我们分析的信息，比如使用了临时表、排序等等。我们能从这些信息里面找一些优化点，这样就足够了吗？
+看看这张图里的执行计划，我们可以提很多问题：为什么t2表上明明使用了索引在Extra列中还是能看到temporary和filesort？如果possible_keys列中有多个索引的话，优化器是基于什么选定使用的索引？这些问题，并不能非常直观地从执行计划中看出来更多的信息，这个时候，我们可以开启OPTIMIZER_TRACE，基于OPTIMIZER_TRACE捕获的信息，去做更细致的追踪分析。一起来看看吧~
+OPTIMIZER_TRACE是什么呢？
+它是一个跟踪功能，跟踪执行的语句的解析优化执行的过程，并将跟踪到的信息记录到INFORMATION_SCHEMA.OPTIMIZER_TRACE表中
+可以通过optimizer_trace系统变量启停跟踪功能，MySQL从5.6开始提供了相关的功能，但是MySQL默认是关闭它的，我们在需要使用的时候才会手动去开启。
+optimizer_trace可以是会话或者是全局开启，但是每个会话都只能跟踪它自己执行的语句，表中默认只记录最后一个查询的跟踪结果（表中记录的跟踪结果数可以通过optimizer_trace的参数设置）
+可跟踪语句对象：
+SELECT/INSERT/REPLACE/UPDATE/DELETE
+EXPLAIN
+SET
+DO
+DECLARE/CASE/IF/RETURN
+CALL
+相关变量浅析
+
+mysql > show variables like '%optimizer_trace%';
++------------------------------+----------------------------------------------------------------------------+
+| Variable_name | Value |
++------------------------------+----------------------------------------------------------------------------+
+| optimizer_trace | enabled=off,one_line=off |
+| optimizer_trace_features | greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on |
+| optimizer_trace_limit | 1 |
+| optimizer_trace_max_mem_size | 16384 |
+| optimizer_trace_offset | -1 |
++------------------------------+----------------------------------------------------------------------------+
+optimizer_trace
+* enabled：启用/禁用optimizer_trace功能
+* one_line：决定了跟踪信息的存储方式，为on表示使用单行存储，否则以JSON树的标准展示形式存储。单行存储中跟踪结果中没有空格，造成可读性极差，但对于JSON解析器来说是可以解析的，将该参数打开唯一的优势就是节省空间，一般不建议开启
+optimizer_trace_features：该变量中存储了跟踪信息中可控的打印项，可以通过调整该变量，控制在INFORMATION_SCHEMA.OPTIMIZER_TRACE表中的trace列需要打印的JSON项和不需要打印的JSON项。默认打开该参数下的所有项
+optimizer_trace_max_mem_size ：optimizer_trace内存的大小，如果跟踪信息超过这个大小，信息将会被截断
+optimizer_trace_limit  & optimizer_trace_offset  
+* 这两个参数神似于SELECT语句中的“LIMIT offset, row_count”，optimizer_trace_limit 约束的是跟踪信息存储的个数，optimizer_trace_offset 则是约束偏移量。和 LIMIT 一样，optimizer_trace_offset 从0开始计算（最老的一个查询记录的偏移量为0）
+* optimizer_trace_offset 的正负值，不需要太过于去纠结，如下表所示，其实offset 0 = offset -5 ，它们是一个等价的关系，仅仅是表述方式不同。这样的表述方式和python中的切片的表述是一致的，了解python的童鞋们都知道，切片的时候经常用到-1取列表中最后一个数值或者是反向取值。
+
+
+* 结合下MySQL给出的默认值进行解读，MySQL的默认值： optimizer_trace_limit = 1,optimizer_trace_offset = -1。optimizer_trace_limit = 1表示只存储一个查询信息，optimizer_trace_offset = -1 则是指向最近的一个查询，即，在INFORMATION_SCHEMA.OPTIMIZER_TRACE表中只存储最近最后执行的一行结果数据
+
+PS：修改optimizer_trace参数后INFORMATION_SCHEMA.OPTIMIZER_TRACE表会被清空
